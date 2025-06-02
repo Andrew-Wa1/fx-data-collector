@@ -4,6 +4,15 @@ import requests
 import pandas as pd
 from datetime import datetime
 from git import Repo
+import time
+from datetime import datetime
+
+print("✅ Collector started...")
+
+while True:
+    print(f"🕒 Fetching data at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Simulate work here
+    time.sleep(60)
 
 # === CONFIGURATION ===
 API_KEY = os.getenv("FASTFOREX_API_KEY")
