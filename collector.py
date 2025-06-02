@@ -1,44 +1,42 @@
 import requests
 import pandas as pd
-from datetime import datetime
+import time
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 
+# Load environment variables (API key)
 load_dotenv()
-API_KEY = os.getenv("FASTFOREX_API_KEY")
-CURRENCY_PAIR = "EURUSD"  # Adjust as needed
-BASE_URL = "https://api.fastforex.io/fetch-one"
 
-def get_fx_rate():
-    params = {
-        "from": "EUR",
-        "to": "USD",
-        "api_key": API_KEY
-    }
-    response = requests.get(BASE_URL, params=params)
-    data = response.json()
-    
-    if "result" in data and "USD" in data["result"]:
-        timestamp = datetime.now().replace(second=0, microsecond=0)
-        price = float(data["result"]["USD"])
-        return {"Date": timestamp.isoformat(), "Price": price}
-    else:
-        print("API error:", data)
-        return None
+API_KEY = os.getenv("API_KEY")  # Your API key from FastForex
+URL = "https://api.fastforex.io/fetch-all?api_key=" + API_KEY
+SAVE_FOLDER = "live_data"
 
-def save_to_csv(data):
-    filename = f"EURUSD_live_{datetime.now().date()}.csv"
-    if os.path.exists(filename):
-        df = pd.read_csv(filename)
-    else:
-        df = pd.DataFrame(columns=["Date", "Price"])
-    df = pd.concat([df, pd.DataFrame([data])])
-    df.to_csv(filename, index=False)
+# Ensure the save folder exists
+os.makedirs(SAVE_FOLDER, exist_ok=True)
 
-if __name__ == "__main__":
-    data = get_fx_rate()
-    if data:
-        save_to_csv(data)
-        print("✅ Data saved:", data)
-    else:
-        print("❌ Failed to fetch data.")
+def fetch_and_save():
+    try:
+        response = requests.get(URL)
+        data = response.json()
+        rates = data.get("results", {})
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  # UTC time format
+        
+        # Iterate through each currency pair and save data
+        for pair, price in rates.items():
+            filename = os.path.join(SAVE_FOLDER, f"{pair}_live.csv")
+            df = pd.DataFrame([{"Date": timestamp, "Price": price}])
+            
+            # Append to the file if it exists; otherwise, create a new one
+            if os.path.exists(filename):
+                df.to_csv(filename, mode='a', header=False, index=False)
+            else:
+                df.to_csv(filename, index=False)
+        
+        print(f"[{timestamp}] Data saved.")
+    except Exception as e:
+        print("Error fetching data:", e)
+
+while True:
+    fetch_and_save()  # Fetch and save the data
+    time.sleep(60)  # Wait 60 seconds before the next data fetch
