@@ -1,42 +1,76 @@
+import os
 import requests
 import pandas as pd
 import time
-import os
 from datetime import datetime
-from dotenv import load_dotenv
+from git import Repo
 
-# Load environment variables (API key)
-load_dotenv()
+# GitHub Repository Info (make sure these are set as environment variables in Render)
+GIT_USERNAME = os.getenv("GIT_USERNAME")
+GIT_EMAIL = os.getenv("GIT_EMAIL")
+GIT_TOKEN = os.getenv("GIT_TOKEN")
+REPO_DIR = "/home/render/fx-data-collector"  # Update based on your project structure
+REPO_NAME = "fx-data-collector"
+REPO_URL = f"https://{GIT_USERNAME}:{GIT_TOKEN}@github.com/{GIT_USERNAME}/{REPO_NAME}.git"
 
-API_KEY = os.getenv("API_KEY")  # Your API key from FastForex
-URL = "https://api.fastforex.io/fetch-all?api_key=" + API_KEY
-SAVE_FOLDER = "live_data"
+# API URL and Params for fetching data
+API_URL = "https://api.exchangerate-api.com/v4/latest/USD"  # Example endpoint, replace with actual
+PAIR = "EUR"
+FILE_NAME = f"{PAIR}_exchange_rate_data.csv"
+FILE_PATH = os.path.join(REPO_DIR, FILE_NAME)
 
-# Ensure the save folder exists
-os.makedirs(SAVE_FOLDER, exist_ok=True)
-
-def fetch_and_save():
+def fetch_fx_data():
     try:
-        response = requests.get(URL)
+        response = requests.get(API_URL)
         data = response.json()
-        rates = data.get("results", {})
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  # UTC time format
-        
-        # Iterate through each currency pair and save data
-        for pair, price in rates.items():
-            filename = os.path.join(SAVE_FOLDER, f"{pair}_live.csv")
-            df = pd.DataFrame([{"Date": timestamp, "Price": price}])
-            
-            # Append to the file if it exists; otherwise, create a new one
-            if os.path.exists(filename):
-                df.to_csv(filename, mode='a', header=False, index=False)
-            else:
-                df.to_csv(filename, index=False)
-        
-        print(f"[{timestamp}] Data saved.")
+        price = data['rates'][PAIR]
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"✅ {PAIR} rate: {price} at {timestamp}")
+        return timestamp, price
     except Exception as e:
-        print("Error fetching data:", e)
+        print(f"❌ Error fetching data: {e}")
+        return None, None
 
-while True:
-    fetch_and_save()  # Fetch and save the data
-    time.sleep(60)  # Wait 60 seconds before the next data fetch
+def update_git_repo():
+    try:
+        repo = Repo(REPO_DIR)
+        repo.git.add(FILE_NAME)
+        repo.index.commit("Update exchange rate data")
+        origin = repo.remotes.origin
+        origin.push()
+        print("✅ Successfully pushed data to GitHub!")
+    except Exception as e:
+        print(f"❌ Error pushing data to GitHub: {e}")
+
+def write_to_csv(timestamp, price):
+    try:
+        # Load existing data or create a new dataframe
+        if os.path.exists(FILE_PATH):
+            df = pd.read_csv(FILE_PATH)
+        else:
+            df = pd.DataFrame(columns=["Date", "Price"])
+
+        # Append new data
+        new_data = pd.DataFrame([[timestamp, price]], columns=["Date", "Price"])
+        df = pd.concat([df, new_data], ignore_index=True)
+
+        # Save to CSV
+        df.to_csv(FILE_PATH, index=False)
+        print(f"✅ Data saved to {FILE_PATH}")
+    except Exception as e:
+        print(f"❌ Error writing to CSV: {e}")
+
+def main():
+    # Make sure to set your Git config for GitHub
+    os.system(f"git config --global user.email {GIT_EMAIL}")
+    os.system(f"git config --global user.name {GIT_USERNAME}")
+
+    while True:
+        timestamp, price = fetch_fx_data()
+        if timestamp and price:
+            write_to_csv(timestamp, price)
+            update_git_repo()
+        time.sleep(60)  # Wait for a minute before fetching again
+
+if __name__ == "__main__":
+    main()
