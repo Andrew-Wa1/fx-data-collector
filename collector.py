@@ -1,76 +1,47 @@
-import os
 import requests
 import pandas as pd
-import time
 from datetime import datetime
-from git import Repo
+import os
+import subprocess
 
-# GitHub Repository Info (make sure these are set as environment variables in Render)
-GIT_USERNAME = os.getenv("GIT_USERNAME")
-GIT_EMAIL = os.getenv("GIT_EMAIL")
-GIT_TOKEN = os.getenv("GIT_TOKEN")
-REPO_DIR = "/home/render/fx-data-collector"  # Update based on your project structure
-REPO_NAME = "fx-data-collector"
-REPO_URL = f"https://{GIT_USERNAME}:{GIT_TOKEN}@github.com/{GIT_USERNAME}/{REPO_NAME}.git"
+# Environment variables (set these in Render)
+API_KEY = os.getenv("FASTFOREX_API_KEY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_DIR = "/home/render/fx-data-collector"  # Adjust if your path is different
+PAIR = "USD_EUR"
+FILENAME = f"{PAIR}_live.csv"
 
-# API URL and Params for fetching data
-API_URL = "https://api.exchangerate-api.com/v4/latest/USD"  # Example endpoint, replace with actual
-PAIR = "EUR"
-FILE_NAME = f"{PAIR}_exchange_rate_data.csv"
-FILE_PATH = os.path.join(REPO_DIR, FILE_NAME)
+def fetch_live_fx():
+    url = f"https://api.fastforex.io/fetch-one?from=USD&to=EUR&api_key={API_KEY}"
+    response = requests.get(url)
+    data = response.json()
+    rate = data.get("result", {}).get("EUR")
+    if rate:
+        return rate, datetime.utcnow()
+    return None, None
 
-def fetch_fx_data():
+def save_to_csv(rate, timestamp):
+    path = os.path.join(REPO_DIR, FILENAME)
+    df = pd.DataFrame([{"Date": timestamp.isoformat(), "Price": rate}])
+    if os.path.exists(path):
+        df.to_csv(path, mode="a", header=False, index=False)
+    else:
+        df.to_csv(path, index=False)
+    print(f"✅ Saved FX data: {rate} at {timestamp}")
+
+def git_commit_and_push():
     try:
-        response = requests.get(API_URL)
-        data = response.json()
-        price = data['rates'][PAIR]
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"✅ {PAIR} rate: {price} at {timestamp}")
-        return timestamp, price
-    except Exception as e:
-        print(f"❌ Error fetching data: {e}")
-        return None, None
-
-def update_git_repo():
-    try:
-        repo = Repo(REPO_DIR)
-        repo.git.add(FILE_NAME)
-        repo.index.commit("Update exchange rate data")
-        origin = repo.remotes.origin
-        origin.push()
-        print("✅ Successfully pushed data to GitHub!")
-    except Exception as e:
-        print(f"❌ Error pushing data to GitHub: {e}")
-
-def write_to_csv(timestamp, price):
-    try:
-        # Load existing data or create a new dataframe
-        if os.path.exists(FILE_PATH):
-            df = pd.read_csv(FILE_PATH)
-        else:
-            df = pd.DataFrame(columns=["Date", "Price"])
-
-        # Append new data
-        new_data = pd.DataFrame([[timestamp, price]], columns=["Date", "Price"])
-        df = pd.concat([df, new_data], ignore_index=True)
-
-        # Save to CSV
-        df.to_csv(FILE_PATH, index=False)
-        print(f"✅ Data saved to {FILE_PATH}")
-    except Exception as e:
-        print(f"❌ Error writing to CSV: {e}")
-
-def main():
-    # Make sure to set your Git config for GitHub
-    os.system(f"git config --global user.email {GIT_EMAIL}")
-    os.system(f"git config --global user.name {GIT_USERNAME}")
-
-    while True:
-        timestamp, price = fetch_fx_data()
-        if timestamp and price:
-            write_to_csv(timestamp, price)
-            update_git_repo()
-        time.sleep(60)  # Wait for a minute before fetching again
+        subprocess.run(["git", "-C", REPO_DIR, "add", FILENAME], check=True)
+        subprocess.run(["git", "-C", REPO_DIR, "commit", "-m", "Update FX data"], check=True)
+        subprocess.run(["git", "-C", REPO_DIR, "push", "origin", "main"], check=True)
+        print("🚀 Git push complete.")
+    except subprocess.CalledProcessError as e:
+        print("⚠️ Git push failed:", e)
 
 if __name__ == "__main__":
-    main()
+    rate, timestamp = fetch_live_fx()
+    if rate:
+        save_to_csv(rate, timestamp)
+        git_commit_and_push()
+    else:
+        print("❌ Failed to fetch FX rate.")
