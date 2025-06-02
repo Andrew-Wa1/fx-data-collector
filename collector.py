@@ -15,7 +15,7 @@ while True:
     time.sleep(60)
 
 # === CONFIGURATION ===
-API_KEY = os.getenv("FASTFOREX_API_KEY")
+API_KEY = os.getenv("API_KEY")
 BASE_URL = "https://api.fastforex.io/fetch-one"
 FROM = "EUR"
 TO = "USD"
