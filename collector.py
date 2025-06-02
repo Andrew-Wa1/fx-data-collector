@@ -1,59 +1,67 @@
+import os
+import time
 import requests
 import pandas as pd
-import time
-import os
-import subprocess
 from datetime import datetime
+from git import Repo
 
-print("🔁 Starting FX Data Collector...")
+# === CONFIGURATION ===
+API_KEY = os.getenv("FASTFOREX_API_KEY")
+BASE_URL = "https://api.fastforex.io/fetch-one"
+FROM = "EUR"
+TO = "USD"
+INTERVAL = 60  # seconds
+DATA_DIR = "historical_data"
+CSV_FILE = os.path.join(DATA_DIR, f"{FROM}{TO}_live.csv")
+REPO_DIR = os.getcwd()
 
-# Load API key from environment
-API_KEY = os.getenv("API_KEY")
-if not API_KEY:
-    print("❌ No API key found! Set API_KEY in your environment.")
-    exit()
+# === Ensure data directory exists ===
+os.makedirs(DATA_DIR, exist_ok=True)
 
-DATA_FILE = "EUR_USD_live.csv"
+# === Git Repo Setup ===
+repo = Repo(REPO_DIR)
 
-def fetch_fx_rate():
-    url = f"https://api.fastforex.io/fetch-one?from=EUR&to=USD&api_key={API_KEY}"
+def fetch_rate():
     try:
-        response = requests.get(url)
+        params = {"from": FROM, "to": TO, "api_key": API_KEY}
+        response = requests.get(BASE_URL, params=params)
         data = response.json()
-        if data.get("result") and data["result"].get("USD"):
-            price = float(data["result"]["USD"])
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            return timestamp, price
+        if "result" in data and TO in data["result"]:
+            price = float(data["result"][TO])
+            return price
         else:
-            print(f"⚠️ API response missing rate: {data}")
-            return None, None
+            print("API error:", data)
+            return None
     except Exception as e:
-        print(f"❌ Error fetching FX rate: {e}")
-        return None, None
+        print("Request failed:", e)
+        return None
 
-def save_to_csv(timestamp, price):
-    row = {"Date": timestamp, "Price": price}
-    if os.path.exists(DATA_FILE):
-        df = pd.read_csv(DATA_FILE)
-        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+def save_rate(price):
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    df_new = pd.DataFrame([{"Date": timestamp, "Price": price}])
+
+    if os.path.exists(CSV_FILE):
+        df_existing = pd.read_csv(CSV_FILE)
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
     else:
-        df = pd.DataFrame([row])
-    df.to_csv(DATA_FILE, index=False)
-    print(f"✅ {timestamp} | EUR/USD: {price}")
+        df_combined = df_new
 
-def commit_and_push():
-    try:
-        subprocess.run(["git", "add", DATA_FILE], check=True)
-        subprocess.run(["git", "commit", "-m", "📈 Auto-update EUR/USD live data"], check=True)
-        subprocess.run(["git", "push"], check=True)
-        print("🚀 Changes pushed to GitHub.")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Git error: {e}")
+    df_combined.to_csv(CSV_FILE, index=False)
+    print(f"✅ Saved: {timestamp}, {price}")
 
-# Main loop
+def commit_to_git():
+    repo.git.add(all=True)
+    repo.index.commit(f"Update FX data at {datetime.utcnow()}")
+    origin = repo.remote(name="origin")
+    origin.push()
+    print("📤 Pushed to GitHub.")
+
+# === Loop ===
 while True:
-    timestamp, price = fetch_fx_rate()
-    if timestamp and price:
-        save_to_csv(timestamp, price)
-        commit_and_push()
-    time.sleep(60)
+    fx_price = fetch_rate()
+    if fx_price:
+        save_rate(fx_price)
+        commit_to_git()
+    else:
+        print("⚠️ Failed to fetch FX rate.")
+    time.sleep(INTERVAL)
