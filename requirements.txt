@@ -61,4 +61,4 @@ wheel==0.42.0
 zope.interface==6.1
 python-dotenv
 python-dotenv
-psycopg2
+psycopg2-binary
