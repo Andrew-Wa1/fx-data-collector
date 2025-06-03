@@ -5,10 +5,10 @@ import psycopg2
 from datetime import datetime
 from dotenv import load_dotenv
 
-# === LOAD ENVIRONMENT VARIABLES ===
+# === LOAD ENV VARIABLES ===
 load_dotenv()
 DB_URL = os.getenv("SUPABASE_DB_URL")
-API_KEY = os.getenv("API_KEY")  # FastForex API key
+API_KEY = os.getenv("API_KEY")
 
 # === FX PAIRS TO TRACK ===
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
@@ -27,13 +27,13 @@ def fetch_rate(base, quote):
         data = response.json()
         if "result" in data and quote in data["result"]:
             return float(data["result"][quote])
-        print(f"⚠️ Unexpected data for {base}/{quote}:", data)
+        print(f"⚠️ Unexpected data for {base}/{quote}: {data}")
         return None
     except Exception as e:
         print(f"❌ Error fetching {base}/{quote}: {e}")
         return None
 
-# === SAVE TO DATABASE ===
+# === INSERT TO SUPABASE ===
 def save_to_db(conn, base, quote, rate):
     try:
         with conn.cursor() as cur:
@@ -44,18 +44,23 @@ def save_to_db(conn, base, quote, rate):
         conn.commit()
         print(f"✅ Saved {base}/{quote}: {rate}")
     except Exception as e:
-        print(f"❌ DB Error for {base}/{quote}: {e}")
+        print(f"❌ DB error for {base}/{quote}: {e}")
 
 # === MAIN LOOP ===
 while True:
     print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
-    conn = connect_db()
-    
+    try:
+        conn = connect_db()
+    except Exception as e:
+        print(f"❌ Failed to connect to DB: {e}")
+        time.sleep(60)
+        continue
+
     for base, quote in PAIRS:
         rate = fetch_rate(base, quote)
         if rate:
             save_to_db(conn, base, quote, rate)
-        time.sleep(0.3)  # avoid hammering API too fast
+        time.sleep(0.3)  # Avoid hitting rate limits
 
     conn.close()
     time.sleep(60)
