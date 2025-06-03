@@ -1,4 +1,3 @@
-import sys
 import os
 import time
 import requests
@@ -31,12 +30,25 @@ def fetch_rate(base, quote):
 
         if "result" in data and quote in data["result"]:
             rate = float(data["result"][quote])
-            fx_time = datetime.utcfromtimestamp(data.get("updated", time.time()))
-            return rate, fx_time
+
+            # Parse timestamp if provided, else fallback to current UTC
+            timestamp = datetime.utcnow()
+            if "timestamp" in data:
+                try:
+                    ts_value = data["timestamp"]
+                    if isinstance(ts_value, str):
+                        ts_value = int(ts_value)
+                    timestamp = datetime.utcfromtimestamp(ts_value)
+                except Exception as e:
+                    print(f"⚠️ Timestamp parse failed for {base}/{quote}: {e}", flush=True)
+
+            return rate, timestamp
+
         print(f"⚠️ Unexpected data for {base}/{quote}: {data}", flush=True)
+        return None, None
     except Exception as e:
         print(f"❌ Error fetching {base}/{quote}: {e}", flush=True)
-    return None, None
+        return None, None
 
 def save_to_db(conn, base, quote, rate, timestamp):
     try:
@@ -46,13 +58,14 @@ def save_to_db(conn, base, quote, rate, timestamp):
                 VALUES (%s, %s, %s, %s);
             """, (timestamp, base, quote, rate))
         conn.commit()
-        print(f"✅ Saved {base}/{quote} @ {timestamp.strftime('%H:%M:%S')}: {rate}", flush=True)
+        print(f"✅ Saved {base}/{quote}: {rate} @ {timestamp}", flush=True)
     except Exception as e:
         print(f"❌ DB error for {base}/{quote}: {e}", flush=True)
 
 # === MAIN LOOP ===
 while True:
-    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
+    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
     try:
         conn = connect_db()
     except Exception as e:
@@ -61,9 +74,9 @@ while True:
         continue
 
     for base, quote in PAIRS:
-        rate, fx_time = fetch_rate(base, quote)
-        if rate and fx_time:
-            save_to_db(conn, base, quote, rate, fx_time)
+        rate, timestamp = fetch_rate(base, quote)
+        if rate and timestamp:
+            save_to_db(conn, base, quote, rate, timestamp)
         time.sleep(0.3)
 
     conn.close()
