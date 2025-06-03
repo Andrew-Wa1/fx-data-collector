@@ -5,10 +5,14 @@ import psycopg2
 from datetime import datetime
 from dotenv import load_dotenv
 
-# === LOAD ENV VARIABLES ===
+# === LOAD ENVIRONMENT VARIABLES ===
 load_dotenv()
 DB_URL = os.getenv("SUPABASE_DB_URL")
 API_KEY = os.getenv("API_KEY")
+
+# === DEBUG LOGGING FOR ENV VARS ===
+print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}")
+print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}")
 
 # === FX PAIRS TO TRACK ===
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
@@ -33,7 +37,7 @@ def fetch_rate(base, quote):
         print(f"❌ Error fetching {base}/{quote}: {e}")
         return None
 
-# === INSERT TO SUPABASE ===
+# === SAVE TO DATABASE ===
 def save_to_db(conn, base, quote, rate):
     try:
         with conn.cursor() as cur:
@@ -52,15 +56,4 @@ while True:
     try:
         conn = connect_db()
     except Exception as e:
-        print(f"❌ Failed to connect to DB: {e}")
-        time.sleep(60)
-        continue
-
-    for base, quote in PAIRS:
-        rate = fetch_rate(base, quote)
-        if rate:
-            save_to_db(conn, base, quote, rate)
-        time.sleep(0.3)  # Avoid hitting rate limits
-
-    conn.close()
-    time.sleep(60)
+        print(f"❌ Failed to c
