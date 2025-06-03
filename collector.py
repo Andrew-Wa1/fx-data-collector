@@ -56,4 +56,15 @@ while True:
     try:
         conn = connect_db()
     except Exception as e:
-        print(f"❌ Failed to c
+        print(f"❌ Failed to connect to DB: {e}")
+        time.sleep(60)
+        continue
+
+    for base, quote in PAIRS:
+        rate = fetch_rate(base, quote)
+        if rate:
+            save_to_db(conn, base, quote, rate)
+        time.sleep(0.3)  # Avoid hammering the API
+
+    conn.close()
+    time.sleep(60)
