@@ -1,18 +1,21 @@
+import sys
 import os
 import time
 import requests
 import psycopg2
 from datetime import datetime
 
-print("🚀 Collector script starting up...")
+print("🚀 Collector script starting up...", flush=True)
+print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
+print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
 # === LOAD ENV VARS DIRECTLY ===
 DB_URL = os.environ.get("SUPABASE_DB_URL")
 API_KEY = os.environ.get("API_KEY")
 
 # === DEBUG LOGGING ===
-print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}")
-print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}")
+print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
+print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
 # === FX PAIRS ===
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
@@ -29,10 +32,10 @@ def fetch_rate(base, quote):
         data = response.json()
         if "result" in data and quote in data["result"]:
             return float(data["result"][quote])
-        print(f"⚠️ Unexpected data for {base}/{quote}: {data}")
+        print(f"⚠️ Unexpected data for {base}/{quote}: {data}", flush=True)
         return None
     except Exception as e:
-        print(f"❌ Error fetching {base}/{quote}: {e}")
+        print(f"❌ Error fetching {base}/{quote}: {e}", flush=True)
         return None
 
 def save_to_db(conn, base, quote, rate):
@@ -43,17 +46,17 @@ def save_to_db(conn, base, quote, rate):
                 VALUES (%s, %s, %s, %s);
             """, (datetime.utcnow(), base, quote, rate))
         conn.commit()
-        print(f"✅ Saved {base}/{quote}: {rate}")
+        print(f"✅ Saved {base}/{quote}: {rate}", flush=True)
     except Exception as e:
-        print(f"❌ DB error for {base}/{quote}: {e}")
+        print(f"❌ DB error for {base}/{quote}: {e}", flush=True)
 
 # === MAIN LOOP ===
 while True:
-    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     try:
         conn = connect_db()
     except Exception as e:
-        print(f"❌ Failed to connect to DB: {e}")
+        print(f"❌ Failed to connect to DB: {e}", flush=True)
         time.sleep(60)
         continue
 
