@@ -11,6 +11,7 @@ print("🚀 Collector script starting up...", flush=True)
 DB_URL = os.environ.get("SUPABASE_DB_URL")
 API_KEY = os.environ.get("API_KEY")
 
+# === DEBUG LOGGING ===
 print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
 print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
@@ -27,42 +28,29 @@ def fetch_rate(base, quote):
         params = {"from": base, "to": quote, "api_key": API_KEY}
         response = requests.get(url, params=params)
         data = response.json()
-
-        if "result" not in data or quote not in data["result"]:
-            print(f"⚠️ Unexpected response for {base}/{quote}: {data}", flush=True)
-            return None, None
-
-        rate = float(data["result"][quote])
-
-        # Parse timestamp if available
-        timestamp = datetime.utcnow()
-        if "timestamp" in data:
-            try:
-                timestamp_int = int(data["timestamp"])
-                timestamp = datetime.utcfromtimestamp(timestamp_int)
-            except Exception as e:
-                print(f"⚠️ Could not parse timestamp for {base}/{quote}: {e}", flush=True)
-
-        return rate, timestamp
+        if "result" in data and quote in data["result"]:
+            return float(data["result"][quote])
+        print(f"⚠️ Unexpected data for {base}/{quote}: {data}", flush=True)
     except Exception as e:
         print(f"❌ Error fetching {base}/{quote}: {e}", flush=True)
-        return None, None
+    return None
 
-def save_to_db(conn, base, quote, rate, timestamp):
+def save_batch_to_db(conn, batch_rows):
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.executemany("""
                 INSERT INTO fx_rates (timestamp, base_currency, quote_currency, rate)
                 VALUES (%s, %s, %s, %s);
-            """, (timestamp, base, quote, rate))
+            """, batch_rows)
         conn.commit()
-        print(f"✅ Saved {base}/{quote}: {rate} at {timestamp}", flush=True)
+        print(f"✅ Saved batch of {len(batch_rows)} rates", flush=True)
     except Exception as e:
-        print(f"❌ DB error for {base}/{quote}: {e}", flush=True)
+        print(f"❌ DB error during batch insert: {e}", flush=True)
 
 # === MAIN LOOP ===
 while True:
-    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
+    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
     try:
         conn = connect_db()
     except Exception as e:
@@ -70,11 +58,17 @@ while True:
         time.sleep(60)
         continue
 
+    batch_rows = []
+    timestamp = datetime.utcnow()
+
     for base, quote in PAIRS:
-        rate, timestamp = fetch_rate(base, quote)
-        if rate is not None and timestamp is not None:
-            save_to_db(conn, base, quote, rate, timestamp)
-        time.sleep(0.3)
+        rate = fetch_rate(base, quote)
+        if rate is not None:
+            batch_rows.append((timestamp, base, quote, rate))
+        time.sleep(0.25)
+
+    if batch_rows:
+        save_batch_to_db(conn, batch_rows)
 
     conn.close()
     time.sleep(60)
