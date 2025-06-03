@@ -4,6 +4,8 @@ import requests
 import psycopg2
 from datetime import datetime
 
+print("🚀 Collector script starting up...")
+
 # === LOAD ENV VARS DIRECTLY ===
 DB_URL = os.environ.get("SUPABASE_DB_URL")
 API_KEY = os.environ.get("API_KEY")
