@@ -4,30 +4,19 @@ import requests
 import pandas as pd
 from datetime import datetime
 from git import Repo
-import time
-from datetime import datetime
-
-print("✅ Collector started...")
-
-while True:
-    print(f"🕒 Fetching data at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    # Simulate work here
-    time.sleep(60)
 
 # === CONFIGURATION ===
 API_KEY = os.getenv("API_KEY")
 BASE_URL = "https://api.fastforex.io/fetch-one"
 FROM = "EUR"
 TO = "USD"
-INTERVAL = 60  # seconds
+INTERVAL = 60  # in seconds
 DATA_DIR = "historical_data"
 CSV_FILE = os.path.join(DATA_DIR, f"{FROM}{TO}_live.csv")
 REPO_DIR = os.getcwd()
 
-# === Ensure data directory exists ===
+# === SETUP ===
 os.makedirs(DATA_DIR, exist_ok=True)
-
-# === Git Repo Setup ===
 repo = Repo(REPO_DIR)
 
 def fetch_rate():
@@ -35,42 +24,51 @@ def fetch_rate():
         params = {"from": FROM, "to": TO, "api_key": API_KEY}
         response = requests.get(BASE_URL, params=params)
         data = response.json()
+
         if "result" in data and TO in data["result"]:
             price = float(data["result"][TO])
+            print(f"💱 Price fetched: {price}")
             return price
         else:
-            print("API error:", data)
+            print("❌ API returned unexpected data:", data)
             return None
     except Exception as e:
-        print("Request failed:", e)
+        print("❌ Fetch failed:", e)
         return None
 
 def save_rate(price):
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    df_new = pd.DataFrame([{"Date": timestamp, "Price": price}])
-
+    new_data = pd.DataFrame([{"Date": timestamp, "Price": price}])
+    
     if os.path.exists(CSV_FILE):
-        df_existing = pd.read_csv(CSV_FILE)
-        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        existing_data = pd.read_csv(CSV_FILE)
+        combined = pd.concat([existing_data, new_data], ignore_index=True)
     else:
-        df_combined = df_new
+        combined = new_data
 
-    df_combined.to_csv(CSV_FILE, index=False)
-    print(f"✅ Saved: {timestamp}, {price}")
+    combined.to_csv(CSV_FILE, index=False)
+    print(f"✅ Saved to CSV: {timestamp}, {price}")
 
 def commit_to_git():
-    repo.git.add(all=True)
-    repo.index.commit(f"Update FX data at {datetime.utcnow()}")
-    origin = repo.remote(name="origin")
-    origin.push()
-    print("📤 Pushed to GitHub.")
+    try:
+        repo.git.add(A=True)
+        repo.index.commit(f"📈 Update {FROM}/{TO} at {datetime.utcnow()}")
+        origin = repo.remote(name="origin")
+        origin.push()
+        print("🚀 Changes pushed to GitHub.")
+    except Exception as e:
+        print("⚠️ Git commit/push failed:", e)
 
-# === Loop ===
+# === MAIN LOOP ===
 while True:
-    fx_price = fetch_rate()
-    if fx_price:
-        save_rate(fx_price)
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"🕒 Fetching data at {now}")
+
+    rate = fetch_rate()
+    if rate:
+        save_rate(rate)
         commit_to_git()
     else:
-        print("⚠️ Failed to fetch FX rate.")
+        print("⚠️ No rate to save.")
+    
     time.sleep(INTERVAL)
