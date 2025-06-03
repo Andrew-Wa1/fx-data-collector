@@ -55,7 +55,7 @@ while True:
         conn = connect_db()
     except Exception as e:
         print(f"❌ Failed to connect to DB: {e}", flush=True)
-        time.sleep(60)
+        time.sleep(10)
         continue
 
     batch_rows = []
