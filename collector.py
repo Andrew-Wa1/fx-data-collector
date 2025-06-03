@@ -3,26 +3,22 @@ import time
 import requests
 import psycopg2
 from datetime import datetime
-from dotenv import load_dotenv
 
-# === LOAD ENVIRONMENT VARIABLES ===
-load_dotenv()
-DB_URL = os.getenv("SUPABASE_DB_URL")
-API_KEY = os.getenv("API_KEY")
+# === LOAD ENV VARS DIRECTLY ===
+DB_URL = os.environ.get("SUPABASE_DB_URL")
+API_KEY = os.environ.get("API_KEY")
 
-# === DEBUG LOGGING FOR ENV VARS ===
+# === DEBUG LOGGING ===
 print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}")
 print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}")
 
-# === FX PAIRS TO TRACK ===
+# === FX PAIRS ===
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
 PAIRS = [(base, quote) for base in CURRENCIES for quote in CURRENCIES if base != quote]
 
-# === DATABASE CONNECTION ===
 def connect_db():
     return psycopg2.connect(DB_URL)
 
-# === FETCH FX RATE ===
 def fetch_rate(base, quote):
     try:
         url = "https://api.fastforex.io/fetch-one"
@@ -37,7 +33,6 @@ def fetch_rate(base, quote):
         print(f"❌ Error fetching {base}/{quote}: {e}")
         return None
 
-# === SAVE TO DATABASE ===
 def save_to_db(conn, base, quote, rate):
     try:
         with conn.cursor() as cur:
@@ -64,7 +59,7 @@ while True:
         rate = fetch_rate(base, quote)
         if rate:
             save_to_db(conn, base, quote, rate)
-        time.sleep(0.3)  # Avoid hammering the API
+        time.sleep(0.3)
 
     conn.close()
     time.sleep(60)
