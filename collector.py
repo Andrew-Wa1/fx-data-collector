@@ -1,5 +1,3 @@
-import sys
-import os
 import time
 import requests
 import psycopg2
@@ -7,12 +5,12 @@ from datetime import datetime
 
 print("🚀 Collector script starting up...", flush=True)
 
-# === LOAD ENV VARS DIRECTLY ===
-DB_URL = os.environ.get("SUPABASE_DB_URL")
-API_KEY = os.environ.get("API_KEY")
+# === HARDCODED CREDENTIALS ===
+DB_URL = "postgresql://postgres:j0WZQwxI1OdPzs98@db.efddyekfalqaohssgkmi.supabase.co:5432/postgres"
+API_KEY = "4764d9864f-f6aeb54c65-sx6y19"
 
 # === DEBUG LOGGING ===
-print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
+print(f"✅ Loaded DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
 print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
 # === FX PAIRS ===
@@ -31,21 +29,22 @@ def fetch_rate(base, quote):
         if "result" in data and quote in data["result"]:
             return float(data["result"][quote])
         print(f"⚠️ Unexpected data for {base}/{quote}: {data}", flush=True)
+        return None
     except Exception as e:
         print(f"❌ Error fetching {base}/{quote}: {e}", flush=True)
-    return None
+        return None
 
-def save_batch_to_db(conn, batch_rows):
+def save_batch_to_db(conn, records):
     try:
         with conn.cursor() as cur:
             cur.executemany("""
                 INSERT INTO fx_rates (timestamp, base_currency, quote_currency, rate)
                 VALUES (%s, %s, %s, %s);
-            """, batch_rows)
+            """, records)
         conn.commit()
-        print(f"✅ Saved batch of {len(batch_rows)} rates", flush=True)
+        print(f"✅ Saved batch of {len(records)} rates", flush=True)
     except Exception as e:
-        print(f"❌ DB error during batch insert: {e}", flush=True)
+        print(f"❌ Batch DB error: {e}", flush=True)
 
 # === MAIN LOOP ===
 while True:
@@ -55,20 +54,18 @@ while True:
         conn = connect_db()
     except Exception as e:
         print(f"❌ Failed to connect to DB: {e}", flush=True)
-        time.sleep(10)
+        time.sleep(60)
         continue
 
-    batch_rows = []
-    timestamp = datetime.utcnow()
-
+    records = []
     for base, quote in PAIRS:
         rate = fetch_rate(base, quote)
-        if rate is not None:
-            batch_rows.append((timestamp, base, quote, rate))
-        time.sleep(0.25)
+        if rate:
+            records.append((datetime.utcnow(), base, quote, rate))
+        time.sleep(0.3)  # Gentle pacing to avoid API overload
 
-    if batch_rows:
-        save_batch_to_db(conn, batch_rows)
+    if records:
+        save_batch_to_db(conn, records)
 
     conn.close()
-    time.sleep(60)
+    time.sleep(10)  # <- Adjusted for upgraded plan (up to 10/minute)
