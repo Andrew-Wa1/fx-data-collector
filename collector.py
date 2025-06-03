@@ -6,8 +6,6 @@ import psycopg2
 from datetime import datetime
 
 print("🚀 Collector script starting up...", flush=True)
-print(f"✅ Loaded SUPABASE_DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
-print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
 # === LOAD ENV VARS DIRECTLY ===
 DB_URL = os.environ.get("SUPABASE_DB_URL")
