@@ -1,15 +1,16 @@
 import time
 import requests
 import psycopg2
+import os
+from dotenv import load_dotenv
 from datetime import datetime
 
+# === Load environment variables ===
+load_dotenv()
+DB_URL = os.getenv("SUPABASE_DB_URL") or "postgresql://postgres:j0WZQwxI1OdPzs98@db.efddyekfalqaohssgkmi.supabase.co:5432/postgres"
+API_KEY = os.getenv("API_KEY")
+
 print("🚀 Collector script starting up...", flush=True)
-
-# === HARDCODED CREDENTIALS ===
-DB_URL = "postgresql://postgres:j0WZQwxI1OdPzs98@db.efddyekfalqaohssgkmi.supabase.co:5432/postgres"
-API_KEY = "4764d9864f-f6aeb54c65-sx6y19"
-
-# === DEBUG LOGGING ===
 print(f"✅ Loaded DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
 print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
 
@@ -62,10 +63,10 @@ while True:
         rate = fetch_rate(base, quote)
         if rate:
             records.append((datetime.utcnow(), base, quote, rate))
-        time.sleep(0.3)  # Gentle pacing to avoid API overload
+        time.sleep(0.3)  # Prevent API overload
 
     if records:
         save_batch_to_db(conn, records)
 
     conn.close()
-    time.sleep(10)  # <- Adjusted for upgraded plan (up to 10/minute)
+    time.sleep(10)  # Adjust based on your plan's rate limits
