@@ -53,6 +53,8 @@ def fetch_rate(base, quote):
 def run_collector_loop(interval=60):
     print("🔁 Entering collection loop...")
     while True:
+        rows = []
+
         for base, quote in pairs:
             rate = fetch_rate(base, quote)
             if rate is None:
@@ -66,13 +68,15 @@ def run_collector_loop(interval=60):
                 "rate": rate
             }
 
-            try:
-                supabase.table("fx_rates").insert([row]).execute()
-                print(f"✅ Inserted {base}/{quote} @ {rate:.5f} ({timestamp})")
-            except Exception as e:
-                print(f"[ERROR] Failed to insert {base}/{quote}: {e}")
+            rows.append(row)
+            time.sleep(0.05)  # Optional: adjust for API load
 
-            time.sleep(0.1)  # Slight delay between calls
+        # Batch insert after collecting all
+        try:
+            supabase.table("fx_rates").insert(rows).execute()
+            print(f"✅ Inserted {len(rows)} FX rows in batch")
+        except Exception as e:
+            print(f"[ERROR] Failed batch insert: {e}")
 
         print("✅ Completed one full cycle of FX data collection.\n")
         time.sleep(interval)
