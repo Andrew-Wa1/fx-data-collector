@@ -5,27 +5,35 @@ from supabase import create_client
 from dotenv import load_dotenv
 import os
 
-# Load .env values locally or from Render environment
+print("🚀 Starting FX Collector script...")
+
+# Load environment variables
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_DB_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_KEY = os.getenv("API_KEY")  # FastForex API Key
+API_KEY = os.getenv("API_KEY")
 API_URL = "https://api.fastforex.io/fetch-one"
 
-# Initialize Supabase client
+# Debug: Show loaded env vars
+print(f"SUPABASE_URL: {SUPABASE_URL}")
+print(f"SUPABASE_KEY: {SUPABASE_KEY[:5]}...{SUPABASE_KEY[-5:]}")
+print(f"API_KEY: {API_KEY[:5]}...{API_KEY[-5:]}")
+
+# Create Supabase client
 def get_client():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = get_client()
 
-# Define currency pairs (56 total: 8 × 7)
+# Currency pairs (8x7 = 56)
 currencies = ["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"]
 pairs = [(base, quote) for base in currencies for quote in currencies if base != quote]
 
-# Fetch rate from FastForex
+# Fetch FX rate from FastForex
 def fetch_rate(base, quote):
     try:
+        print(f"🌐 Fetching {base}/{quote}...")
         response = requests.get(API_URL, params={
             "from": base,
             "to": quote,
@@ -33,14 +41,17 @@ def fetch_rate(base, quote):
         })
         response.raise_for_status()
         data = response.json()
-        return data["result"][quote]
+        rate = data["result"][quote]
+        print(f"📈 Received rate: {rate}")
+        return rate
     except Exception as e:
         print(f"[ERROR] Failed to fetch {base}/{quote}: {e}")
+        print("↪️ Response:", response.text if 'response' in locals() else "No response")
         return None
 
-# Collector loop
+# Collector main loop
 def run_collector_loop(interval=60):
-    print("🔁 Starting FX data collector loop...")
+    print("🔁 Entering collection loop...")
     while True:
         for base, quote in pairs:
             rate = fetch_rate(base, quote)
@@ -48,7 +59,6 @@ def run_collector_loop(interval=60):
                 continue
 
             timestamp = datetime.now(timezone.utc).isoformat()
-
             row = {
                 "timestamp": timestamp,
                 "base_currency": base,
@@ -62,10 +72,11 @@ def run_collector_loop(interval=60):
             except Exception as e:
                 print(f"[ERROR] Failed to insert {base}/{quote}: {e}")
 
-            time.sleep(0.1)  # small delay to avoid hammering API/Supabase
+            time.sleep(0.1)  # Slight delay between calls
 
-        print("⏳ Sleeping before next cycle...\n")
+        print("✅ Completed one full cycle of FX data collection.\n")
         time.sleep(interval)
 
+# Run the loop if this is the main script
 if __name__ == "__main__":
     run_collector_loop()
