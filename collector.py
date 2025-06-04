@@ -1,7 +1,7 @@
 import time
 import requests
 from datetime import datetime, timezone
-from supabase_py import create_client
+from supabase import create_client
 from dotenv import load_dotenv
 import os
 
