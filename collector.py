@@ -1,72 +1,62 @@
 import time
 import requests
-import psycopg2
-import os
+from datetime import datetime, timezone
+from supabase_client import get_client
 from dotenv import load_dotenv
-from datetime import datetime
+import os
 
-# === Load environment variables ===
 load_dotenv()
-DB_URL = os.getenv("SUPABASE_DB_URL") or "postgresql://postgres:j0WZQwxI1OdPzs98@db.efddyekfalqaohssgkmi.supabase.co:5432/postgres"
-API_KEY = os.getenv("API_KEY")
+supabase = get_client()
 
-print("🚀 Collector script starting up...", flush=True)
-print(f"✅ Loaded DB_URL: {'yes' if DB_URL else 'NO!'}", flush=True)
-print(f"✅ Loaded API_KEY: {'yes' if API_KEY else 'NO!'}", flush=True)
+API_KEY = os.getenv("API_KEY")  # FastForex key
+API_URL = "https://api.fastforex.io/fetch-one"
 
-# === FX PAIRS ===
-CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
-PAIRS = [(base, quote) for base in CURRENCIES for quote in CURRENCIES if base != quote]
-
-def connect_db():
-    return psycopg2.connect(DB_URL)
+# List of currencies to cover (8x7 = 56 pairs)
+currencies = ["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"]
+pairs = [(base, quote) for base in currencies for quote in currencies if base != quote]
 
 def fetch_rate(base, quote):
     try:
-        url = "https://api.fastforex.io/fetch-one"
-        params = {"from": base, "to": quote, "api_key": API_KEY}
-        response = requests.get(url, params=params)
+        response = requests.get(API_URL, params={
+            "from": base,
+            "to": quote,
+            "api_key": API_KEY
+        })
+        response.raise_for_status()
         data = response.json()
-        if "result" in data and quote in data["result"]:
-            return float(data["result"][quote])
-        print(f"⚠️ Unexpected data for {base}/{quote}: {data}", flush=True)
-        return None
+        return data["result"][quote]
     except Exception as e:
-        print(f"❌ Error fetching {base}/{quote}: {e}", flush=True)
+        print(f"[ERROR] Failed to fetch {base}/{quote}: {e}")
         return None
 
-def save_batch_to_db(conn, records):
-    try:
-        with conn.cursor() as cur:
-            cur.executemany("""
-                INSERT INTO fx_rates (timestamp, base_currency, quote_currency, rate)
-                VALUES (%s, %s, %s, %s);
-            """, records)
-        conn.commit()
-        print(f"✅ Saved batch of {len(records)} rates", flush=True)
-    except Exception as e:
-        print(f"❌ Batch DB error: {e}", flush=True)
+def run_collector_loop(interval=60):
+    print("🔁 Starting FX data collector loop...")
+    while True:
+        for base, quote in pairs:
+            rate = fetch_rate(base, quote)
+            if rate is None:
+                continue  # Skip failed fetches
 
-# === MAIN LOOP ===
-while True:
-    print(f"\n🕒 Collecting at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+            timestamp = datetime.now(timezone.utc).isoformat()
 
-    try:
-        conn = connect_db()
-    except Exception as e:
-        print(f"❌ Failed to connect to DB: {e}", flush=True)
-        time.sleep(10)
-        continue
+            row = {
+                "timestamp": timestamp,
+                "base_currency": base,
+                "quote_currency": quote,
+                "rate": rate
+            }
 
-    records = []
-    for base, quote in PAIRS:
-        rate = fetch_rate(base, quote)
-        if rate:
-            records.append((datetime.utcnow(), base, quote, rate))
-        time.sleep(0.3)  # Prevent API overload
+            try:
+                supabase.table("fx_rates").insert([row]).execute()
+                print(f"✅ Inserted {base}/{quote} @ {rate:.5f} ({timestamp})")
+            except Exception as e:
+                print(f"[ERROR] Failed to insert {base}/{quote}: {e}")
 
-    if records:
-        save_batch_to_db(conn, records)
+            # Optional sleep to reduce strain (optional: 0.1–0.5s)
+            time.sleep(0.1)
 
-    conn.close()
-    time.sleep(10)  # Adjust based on your plan's rate limits
+        print("⏳ Sleeping before next cycle...\n")
+        time.sleep(interval)
+
+if __name__ == "__main__":
+    run_collector_loop()
