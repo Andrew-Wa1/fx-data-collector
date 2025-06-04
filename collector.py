@@ -1,20 +1,29 @@
 import time
 import requests
 from datetime import datetime, timezone
-from supabase_client import get_client
+from supabase import create_client
 from dotenv import load_dotenv
 import os
 
+# Load .env values locally or from Render environment
 load_dotenv()
-supabase = get_client()
 
-API_KEY = os.getenv("API_KEY")  # FastForex key
+SUPABASE_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+API_KEY = os.getenv("API_KEY")  # FastForex API Key
 API_URL = "https://api.fastforex.io/fetch-one"
 
-# List of currencies to cover (8x7 = 56 pairs)
+# Initialize Supabase client
+def get_client():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase = get_client()
+
+# Define currency pairs (56 total: 8 × 7)
 currencies = ["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"]
 pairs = [(base, quote) for base in currencies for quote in currencies if base != quote]
 
+# Fetch rate from FastForex
 def fetch_rate(base, quote):
     try:
         response = requests.get(API_URL, params={
@@ -29,13 +38,14 @@ def fetch_rate(base, quote):
         print(f"[ERROR] Failed to fetch {base}/{quote}: {e}")
         return None
 
+# Collector loop
 def run_collector_loop(interval=60):
     print("🔁 Starting FX data collector loop...")
     while True:
         for base, quote in pairs:
             rate = fetch_rate(base, quote)
             if rate is None:
-                continue  # Skip failed fetches
+                continue
 
             timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -52,8 +62,7 @@ def run_collector_loop(interval=60):
             except Exception as e:
                 print(f"[ERROR] Failed to insert {base}/{quote}: {e}")
 
-            # Optional sleep to reduce strain (optional: 0.1–0.5s)
-            time.sleep(0.1)
+            time.sleep(0.1)  # small delay to avoid hammering API/Supabase
 
         print("⏳ Sleeping before next cycle...\n")
         time.sleep(interval)
