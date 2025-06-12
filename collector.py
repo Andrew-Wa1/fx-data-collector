@@ -9,19 +9,24 @@ from collections import defaultdict
 
 # ─── Load env vars ────────────────────────────────────────────────────────
 load_dotenv()
-API_KEY    = os.getenv("API_KEY")
-API_URL    = "https://api.fastforex.io/multi"
-DATABASE_URL = os.getenv("EXDBURL")  # ex: postgresql://user:pass@host/dbname
+API_KEY = os.getenv("API_KEY")
+API_URL = "https://api.fastforex.io/multi"
 
-# ─── DB Connection ────────────────────────────────────────────────────────
-conn = psycopg2.connect(DATABASE_URL)
+# ─── DB Connection Setup ─────────────────────────────────────────────────
+# Try EXDBURL first (your Render external URL), fallback to DATABASE_URL
+DATABASE_URL = os.getenv("EXDBURL") or os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("Missing EXDBURL / DATABASE_URL environment variable")
+
+# Connect over SSL (Render Postgres requires this)
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 cursor = conn.cursor()
 
 # ─── Define your 12 pairs ─────────────────────────────────────────────────
 PAIRS = [
-    ("EUR","USD"),("USD","JPY"),("GBP","USD"),("AUD","USD"),
-    ("USD","CAD"),("USD","CHF"),("NZD","USD"),("EUR","GBP"),
-    ("EUR","JPY"),("GBP","JPY"),("AUD","JPY"),("USD","MXN"),
+    ("EUR","USD"), ("USD","JPY"), ("GBP","USD"), ("AUD","USD"),
+    ("USD","CAD"), ("USD","CHF"), ("NZD","USD"), ("EUR","GBP"),
+    ("EUR","JPY"), ("GBP","JPY"), ("AUD","JPY"), ("USD","MXN"),
 ]
 
 # Group by base for batch requests
@@ -70,7 +75,7 @@ def run_collector_loop(interval=60, trim_threshold=70_000_000):
         cursor.execute("SELECT COUNT(*) FROM fx_rates;")
         total_rows = cursor.fetchone()[0]
         if total_rows > trim_threshold:
-            # delete oldest so we keep only the newest `trim_threshold` rows
+            to_delete = total_rows - trim_threshold
             delete_sql = """
             DELETE FROM fx_rates
             WHERE ctid IN (
@@ -79,7 +84,6 @@ def run_collector_loop(interval=60, trim_threshold=70_000_000):
               LIMIT %s
             );
             """
-            to_delete = total_rows - trim_threshold
             try:
                 cursor.execute(delete_sql, (to_delete,))
                 conn.commit()
@@ -96,5 +100,6 @@ def run_collector_loop(interval=60, trim_threshold=70_000_000):
 
 if __name__ == "__main__":
     run_collector_loop()
+
 
 
