@@ -1,74 +1,100 @@
+import os
 import time
 import requests
+import psycopg2
+from psycopg2.extras import execute_values
 from datetime import datetime, timezone
-from supabase import create_client
 from dotenv import load_dotenv
-import os
+from collections import defaultdict
 
-# Load env vars
+# ─── Load env vars ────────────────────────────────────────────────────────
 load_dotenv()
+API_KEY    = os.getenv("API_KEY")
+API_URL    = "https://api.fastforex.io/multi"
+DATABASE_URL = os.getenv("EXDBURL")  # ex: postgresql://user:pass@host/dbname
 
-SUPABASE_URL = os.getenv("SUPABASE_DB_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_KEY = os.getenv("API_KEY")
-API_URL = "https://api.fastforex.io/multi"
+# ─── DB Connection ────────────────────────────────────────────────────────
+conn = psycopg2.connect(DATABASE_URL)
+cursor = conn.cursor()
 
-# Create Supabase client
-def get_client():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-supabase = get_client()
-
-# Only 12 pairs you care about
+# ─── Define your 12 pairs ─────────────────────────────────────────────────
 PAIRS = [
-    ("EUR", "USD"), ("USD", "JPY"), ("GBP", "USD"),
-    ("AUD", "USD"), ("USD", "CAD"), ("USD", "CHF"),
-    ("NZD", "USD"), ("EUR", "GBP"), ("EUR", "JPY"),
-    ("GBP", "JPY"), ("AUD", "JPY"), ("USD", "MXN")
+    ("EUR","USD"),("USD","JPY"),("GBP","USD"),("AUD","USD"),
+    ("USD","CAD"),("USD","CHF"),("NZD","USD"),("EUR","GBP"),
+    ("EUR","JPY"),("GBP","JPY"),("AUD","JPY"),("USD","MXN"),
 ]
 
 # Group by base for batch requests
-from collections import defaultdict
 grouped = defaultdict(list)
 for base, quote in PAIRS:
     grouped[base].append(quote)
 
-# Collector main loop
-def run_collector_loop(interval=60):
-    print("🚀 Collector running...")
+# ─── Collector Loop ──────────────────────────────────────────────────────
+def run_collector_loop(interval=60, trim_threshold=70_000_000):
+    print("🚀 Collector running against Postgres...")
     while True:
-        loop_start = time.time()
+        start = time.time()
         rows = []
 
+        # 1) Fetch batch rates
         for base, quotes in grouped.items():
             try:
-                response = requests.get(API_URL, params={
+                r = requests.get(API_URL, params={
                     "from": base,
                     "to": ",".join(quotes),
                     "api_key": API_KEY
                 })
-                response.raise_for_status()
-                data = response.json().get("results", {})
-                for quote, rate in data.items():
-                    rows.append({
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "base_currency": base,
-                        "quote_currency": quote,
-                        "rate": rate
-                    })
+                r.raise_for_status()
+                data = r.json().get("results", {})
+                ts = datetime.now(timezone.utc)
+                for q, rate in data.items():
+                    rows.append((ts, base, q, rate))
             except Exception as e:
-                print(f"[ERROR] API fetch failed for {base}->{quotes}: {e}")
+                print(f"[ERROR] Fetch {base}->{quotes}: {e}")
 
-        try:
-            supabase.table("fx_rates").insert(rows).execute()
-            print(f"✅ Inserted {len(rows)} rows at {datetime.now(timezone.utc).isoformat()}")
-        except Exception as e:
-            print(f"[ERROR] Supabase insert failed: {e}")
+        # 2) Insert all at once
+        if rows:
+            sql = """
+            INSERT INTO fx_rates (timestamp, base_currency, quote_currency, rate)
+            VALUES %s
+            """
+            try:
+                execute_values(cursor, sql, rows)
+                conn.commit()
+                print(f"✅ Inserted {len(rows)} rows @ {datetime.now(timezone.utc).isoformat()}")
+            except Exception as e:
+                conn.rollback()
+                print(f"[ERROR] Insert failed: {e}")
 
-        loop_time = time.time() - loop_start
-        print(f"⏱️ Loop time: {loop_time:.2f}s | Sleeping {max(0, interval - loop_time):.2f}s\n")
-        time.sleep(max(0, interval - loop_time))
+        # 3) Trim oldest if exceeding row count threshold
+        cursor.execute("SELECT COUNT(*) FROM fx_rates;")
+        total_rows = cursor.fetchone()[0]
+        if total_rows > trim_threshold:
+            # delete oldest so we keep only the newest `trim_threshold` rows
+            delete_sql = """
+            DELETE FROM fx_rates
+            WHERE ctid IN (
+              SELECT ctid FROM fx_rates
+              ORDER BY timestamp ASC
+              LIMIT %s
+            );
+            """
+            to_delete = total_rows - trim_threshold
+            try:
+                cursor.execute(delete_sql, (to_delete,))
+                conn.commit()
+                print(f"🗑️  Deleted {to_delete} old rows, now at {trim_threshold} rows")
+            except Exception as e:
+                conn.rollback()
+                print(f"[ERROR] Trim failed: {e}")
+
+        # 4) Sleep until next interval
+        elapsed = time.time() - start
+        sleep_for = max(0, interval - elapsed)
+        print(f"⏱️ Loop time: {elapsed:.2f}s | Sleeping {sleep_for:.2f}s\n")
+        time.sleep(sleep_for)
 
 if __name__ == "__main__":
     run_collector_loop()
+
 
