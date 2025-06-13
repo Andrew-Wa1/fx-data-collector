@@ -1,121 +1,77 @@
-import os
 import time
 import requests
-import psycopg2
-from psycopg2.extras import execute_values
 from datetime import datetime, timezone
+from supabase import create_client
 from dotenv import load_dotenv
-from collections import defaultdict
+import os
 
-# ─── Load env vars ────────────────────────────────────────────────────────
+# ── Load config ──────────────────────────────────────────────────────────────
 load_dotenv()
-API_KEY = os.getenv("API_KEY")
-API_URL = "https://api.fastforex.io/fetch-multi"  # correct batch endpoint
+SUPABASE_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+API_KEY      = os.getenv("API_KEY")
+API_URL      = "https://api.fastforex.io/fetch-one"
 
-# ─── DB Connection Setup ─────────────────────────────────────────────────
-DATABASE_URL = os.getenv("EXDBURL") or os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("Missing EXDBURL / DATABASE_URL environment variable")
+def get_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-cursor = conn.cursor()
+supabase = get_supabase()
 
-# ─── Ensure table exists ──────────────────────────────────────────────────
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS fx_rates (
-  timestamp      TIMESTAMPTZ      NOT NULL,
-  base_currency  TEXT             NOT NULL,
-  quote_currency TEXT             NOT NULL,
-  rate           DOUBLE PRECISION NOT NULL
-);
-""")
-conn.commit()
+# ── Which pairs to fetch ───────────────────────────────────────────────────────
+currencies = ["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"]
+pairs = [(b, q) for b in currencies for q in currencies if b != q]
 
-# ─── Define your 12 pairs ─────────────────────────────────────────────────
-PAIRS = [
-    ("EUR","USD"), ("USD","JPY"), ("GBP","USD"), ("AUD","USD"),
-    ("USD","CAD"), ("USD","CHF"), ("NZD","USD"), ("EUR","GBP"),
-    ("EUR","JPY"), ("GBP","JPY"), ("AUD","JPY"), ("USD","MXN"),
-]
-grouped = defaultdict(list)
-for base, quote in PAIRS:
-    grouped[base].append(quote)
+# ── Fetch one FX rate ─────────────────────────────────────────────────────────
+def fetch_rate(base, quote):
+    try:
+        r = requests.get(API_URL,
+                         params={"from": base, "to": quote, "api_key": API_KEY},
+                         timeout=10)
+        r.raise_for_status()
+        return r.json()["result"][quote]
+    except Exception:
+        return None
 
-# ─── Collector Loop ──────────────────────────────────────────────────────
-def run_collector_loop(interval=60, trim_threshold=70_000_000):
-    print("🚀 Collector running against Postgres...")
-    iteration = 0
-
+# ── Main loop ─────────────────────────────────────────────────────────────────
+def run_collector_loop(interval_s: float = 60):
+    print(f"🚀 Collector running every {interval_s:.0f}s")
     while True:
-        iteration += 1
-        print(f"\n🔄 === Loop #{iteration} starting at {datetime.now(timezone.utc).isoformat()} ===")
         start = time.time()
         rows = []
+        for base, quote in pairs:
+            rate = fetch_rate(base, quote)
+            if rate is None:
+                continue
+            rows.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "base_currency": base,
+                "quote_currency": quote,
+                "rate": rate
+            })
 
-        # 1) Fetch batch rates
-        for base, quotes in grouped.items():
-            url = f"{API_URL}?from={base}&to={','.join(quotes)}&api_key={API_KEY}"
-            print(f"🔗 Requesting: {url}")
-            try:
-                resp = requests.get(API_URL, params={
-                    "from": base,
-                    "to": ",".join(quotes),
-                    "api_key": API_KEY
-                })
-                resp.raise_for_status()
-                data = resp.json().get("results", {})
-                ts = datetime.now(timezone.utc)
-                for q, rate in data.items():
-                    rows.append((ts, base, q, rate))
-                print(f"  ✅ Fetched {len(data)} rates for base {base}")
-            except Exception as e:
-                print(f"  ❌ [ERROR] Fetch {base}->{quotes}: {e}")
-
-        # 2) Bulk insert
         if rows:
-            insert_sql = """
-              INSERT INTO fx_rates (timestamp, base_currency, quote_currency, rate)
-              VALUES %s
-            """
             try:
-                execute_values(cursor, insert_sql, rows)
-                conn.commit()
-                print(f"  ✅ Inserted {len(rows)} rows")
+                supabase.table("fx_rates").insert(rows).execute()
+                print(f"✅ Inserted {len(rows)} rows @ {datetime.now(timezone.utc).isoformat()}")
             except Exception as e:
-                conn.rollback()
-                print(f"  ❌ [ERROR] Insert failed: {e}")
-        else:
-            print("  ⚠️  No rows to insert this cycle")
+                print(f"[ERROR] Insert failed: {e}")
 
-        # 3) Trim oldest if exceeding row count
-        cursor.execute("SELECT COUNT(*) FROM fx_rates;")
-        total = cursor.fetchone()[0]
-        print(f"  ℹ️  Total rows in fx_rates: {total}")
-        if total > trim_threshold:
-            to_delete = total - trim_threshold
-            try:
-                cursor.execute("""
-                  DELETE FROM fx_rates
-                  WHERE ctid IN (
-                    SELECT ctid FROM fx_rates
-                    ORDER BY timestamp ASC
-                    LIMIT %s
-                  );
-                """, (to_delete,))
-                conn.commit()
-                print(f"  🗑️  Deleted {to_delete} oldest rows")
-            except Exception as e:
-                conn.rollback()
-                print(f"  ❌ [ERROR] Trim failed: {e}")
-
-        # 4) Sleep until next interval
+        # how long did we actually take?
         elapsed = time.time() - start
-        sleep_for = max(0, interval - elapsed)
-        print(f"⏱️ Loop #{iteration} took {elapsed:.2f}s — sleeping {sleep_for:.2f}s")
-        time.sleep(sleep_for)
+        # compute exactly how long to sleep so that
+        # start_of_next_loop = start_of_this_loop + interval_s
+        to_sleep = interval_s - elapsed
+        if to_sleep > 0:
+            print(f"⏱ Loop took {elapsed:.1f}s; sleeping {to_sleep:.1f}s\n")
+            time.sleep(to_sleep)
+        else:
+            # if inserts ran long, immediately start next
+            print(f"⏱ Loop took {elapsed:.1f}s; behind schedule, restarting immediately\n")
 
 if __name__ == "__main__":
-    run_collector_loop()
+    # enforce always 60s
+    run_collector_loop(interval_s=60)
+
 
 
 
