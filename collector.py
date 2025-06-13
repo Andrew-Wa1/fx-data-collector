@@ -1,75 +1,74 @@
 #!/usr/bin/env python3
-import os
 import time
 import requests
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import psycopg2
+import os
 from dotenv import load_dotenv
 
 # ── Load config ──────────────────────────────────────────────────────────────
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("EXDBURL")
-if not DATABASE_URL:
-    raise RuntimeError("Missing DATABASE_URL / EXDBURL environment variable")
 API_KEY      = os.getenv("API_KEY")
-API_URL      = "https://api.fastforex.io/fetch-one"
+if not DATABASE_URL or not API_KEY:
+    raise RuntimeError("Need DATABASE_URL (or EXDBURL) and API_KEY in env")
+
+API_MULTI_URL = "https://api.fastforex.io/fetch-multi"
 
 # ── Postgres setup ────────────────────────────────────────────────────────────
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 conn.autocommit = True
 cur = conn.cursor()
 
-# ── The 12 pairs you care about ────────────────────────────────────────────────
+# ── The exact 12 pairs we want ────────────────────────────────────────────────
 pairs = [
     ("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("USD", "CHF"),
     ("AUD", "USD"), ("NZD", "USD"), ("USD", "CAD"), ("EUR", "GBP"),
     ("EUR", "JPY"), ("GBP", "JPY"), ("AUD", "JPY"), ("CHF", "JPY"),
 ]
-
-def fetch_rate(base: str, quote: str) -> float | None:
-    """Fetch a single FX rate."""
-    try:
-        r = requests.get(
-            API_URL,
-            params={"from": base, "to": quote, "api_key": API_KEY},
-            timeout=10
-        )
-        r.raise_for_status()
-        return r.json()["result"][quote]
-    except Exception as e:
-        print(f"[ERROR] fetch_rate {base}/{quote} → {e}")
-        return None
+# Build a map: base → list of quotes
+grouped = {}
+for b, q in pairs:
+    grouped.setdefault(b, []).append(q)
 
 def run_collector_loop(interval_s: float = 60):
-    # 1) align to the next exact minute
+    # ① Align to next exact minute boundary
     now = datetime.now(timezone.utc)
-    # seconds + fractional → how long until second==0
     wait = interval_s - (now.second + now.microsecond/1e6)
     if wait > 0:
         print(f"⏳ Aligning to minute boundary: sleeping {wait:.2f}s")
         time.sleep(wait)
-    print("🚀 Starting collector on minute marks...")
+    print("🚀 Collector running at exact minute marks now…")
 
     while True:
         cycle_start = time.time()
-        # set ts to the exact minute
         ts = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
-        # 2) fetch all rates in parallel
         rows = []
-        with ThreadPoolExecutor(max_workers=len(pairs)) as exe:
-            futures = {
-                exe.submit(fetch_rate, base, quote): (base, quote)
-                for base, quote in pairs
-            }
-            for fut in as_completed(futures):
-                base, quote = futures[fut]
-                rate = fut.result()
-                if rate is not None:
+        # ② Fetch per-base in one call each
+        for base, quotes in grouped.items():
+            try:
+                r = requests.get(
+                    API_MULTI_URL,
+                    params={
+                        "from": base,
+                        "to":    ",".join(quotes),
+                        "api_key": API_KEY
+                    },
+                    timeout=10
+                )
+                r.raise_for_status()
+                data = r.json().get("result", {})
+            except Exception as e:
+                print(f"[ERROR] Multi-fetch {base}→{quotes} failed: {e}")
+                continue
+
+            # ③ Collect only our 12 pairs
+            for quote, rate in data.items():
+                if (base, quote) in pairs and rate is not None:
                     rows.append((ts, base, quote, rate))
 
-        # 3) bulk-insert with ON CONFLICT DO NOTHING
+        # ④ Bulk INSERT with ON CONFLICT DO NOTHING
         if rows:
             args_str = ",".join(
                 cur.mogrify("(%s,%s,%s,%s)", row).decode()
@@ -82,18 +81,18 @@ def run_collector_loop(interval_s: float = 60):
             """
             try:
                 cur.execute(sql)
-                print(f"✅ Inserted {len(rows)} rows for {ts.isoformat()}")
+                print(f"✅ Inserted {len(rows)} rows for {ts:%Y-%m-%d %H:%M:%S} UTC")
             except Exception as e:
-                print(f"[ERROR] insert failed → {e}")
+                print(f"[ERROR] INSERT failed: {e}")
 
-        # 4) sleep until the next minute tick
+        # ⑤ Sleep exactly until the next minute tick
         elapsed = time.time() - cycle_start
         to_sleep = interval_s - elapsed
         if to_sleep > 0:
-            print(f"⏱ Cycle took {elapsed:.1f}s; sleeping {to_sleep:.1f}s\n")
+            print(f"⏱ Cycle took {elapsed:.2f}s; sleeping {to_sleep:.2f}s\n")
             time.sleep(to_sleep)
         else:
-            print(f"⏱ Cycle took {elapsed:.1f}s (behind), restarting immediately\n")
+            print(f"⏱ Cycle took {elapsed:.2f}s (behind); restarting immediately\n")
 
 if __name__ == "__main__":
     run_collector_loop(interval_s=60)
